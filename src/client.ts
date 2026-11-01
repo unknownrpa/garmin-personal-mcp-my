@@ -4,7 +4,7 @@
  * Paths mirror Garmin's own Python client (github.com/garmin/connect-personal-api-python),
  * which is the only published list of endpoints. All endpoints are read-only.
  */
-import type { TokenProvider } from "./auth.js";
+import { DEFAULT_TIMEOUT_MS, type TokenProvider } from "./auth.js";
 
 export class GarminApiError extends Error {
   constructor(
@@ -23,6 +23,7 @@ export class GarminClient {
   constructor(
     private readonly tokens: TokenProvider,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
   ) {}
 
   async get(path: string, query?: Query): Promise<Json> {
@@ -46,6 +47,8 @@ export class GarminClient {
     for (const [k, v] of Object.entries(query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
     const res = await this.fetchImpl(url, {
       headers: { Accept: accept, Authorization: `Bearer ${await this.tokens.token()}` },
+      // Covers reading the body too, which happens after this call returns.
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (res.status === 401 && !retried) {
       // Token revoked or expired early: exchange the key once more.

@@ -4,18 +4,33 @@ import { GarminApiError, type GarminClient } from "./client.js";
 import { compactActivity, MAX_PAGE } from "./activities.js";
 import { extractFit, summarizeFit } from "./fit.js";
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
+function isRealDate(value: string): boolean {
+  const date = new Date(`${value}T00:00:00Z`);
+  // Date rolls 2024-02-30 over to March rather than refusing it, so compare what came back.
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
+}
 
-/** Date-range limits observed on Oct 21 2026; Garmin answers 400 above them with no message. */
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD").refine(isRealDate, "Not a real date; expected YYYY-MM-DD");
+
+/** Vercel refuses a response over 4.5 MB with a bare 413; below this the model gets an error it can act on. */
+const MAX_RESPONSE_BYTES = 4_000_000;
+
+/**
+ * The longest inclusive spans Garmin answered on Nov 1 2026. Steps and stress failed by 56 days,
+ * hydration, sleep and Body Battery by 56, daily summaries and HRV by 732, each with a bare 400.
+ * Weight never failed, so its value is only what was tried. Wellness activity stays at its old
+ * value: the account tested has no such data, and an empty answer proves nothing.
+ */
 const LIMITS = {
-  dailySummaries: 180,
-  hrvSummaries: 180,
-  sleepSummaries: 28,
-  bodyBattery: 28,
-  stress: 7,
-  steps: 7,
-  hydration: 28,
-  weight: 365,
+  dailySummaries: 366,
+  hrvSummaries: 366,
+  sleepSummaries: 30,
+  bodyBattery: 30,
+  stress: 28,
+  steps: 28,
+  hydration: 30,
+  wellnessActivity: 180,
+  weight: 1464,
 };
 
 function text(data: unknown) {
@@ -31,14 +46,24 @@ function fail(err: unknown) {
           ? `${err.message}. Only the paths on the Personal API allowlist answer; this one is not on it.`
           : err.message
       : err instanceof Error
-        ? err.message
+        ? err.name === "TimeoutError"
+          ? "Garmin did not answer in time. Try again, or ask for less."
+          : err.message
         : String(err);
   return { isError: true as const, content: [{ type: "text" as const, text: message }] };
 }
 
+const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(1);
+
 async function run(fn: () => Promise<unknown>) {
   try {
-    return text(await fn());
+    const result = text(await fn());
+    // Measured as a JSON string, because that is how it travels: quotes and newlines get escaped again.
+    const bytes = Buffer.byteLength(JSON.stringify(result.content[0].text));
+    if (bytes > MAX_RESPONSE_BYTES) {
+      throw new Error(`Response is ${megabytes(bytes)} MB; this server returns at most ${megabytes(MAX_RESPONSE_BYTES)} MB. Ask for a shorter range or fewer samples.`);
+    }
+    return result;
   } catch (err) {
     return fail(err);
   }
@@ -63,9 +88,9 @@ function rangeTool(
       annotations: { readOnlyHint: true },
     },
     async ({ startDate, endDate }) => {
-      const span = daysBetween(startDate, endDate);
-      if (span < 0) return fail(new Error("endDate is before startDate"));
-      if (span > maxDays) return fail(new Error(`Range is ${span} days; Garmin accepts up to ${maxDays} days per call for this endpoint. Split the range.`));
+      const days = daysBetween(startDate, endDate) + 1;
+      if (days < 1) return fail(new Error("endDate is before startDate"));
+      if (days > maxDays) return fail(new Error(`Range is ${days} days; Garmin accepts up to ${maxDays} days per call for this endpoint. Split the range.`));
       return run(() => fn(startDate, endDate));
     },
   );
@@ -156,7 +181,7 @@ export function registerTools(server: McpServer, garmin: GarminClient) {
   rangeTool(server, "get_hydration", "Daily hydration logs.", LIMITS.hydration, (s, e) => garmin.getDailyHydration(s, e));
   dateTool(server, "get_heart_rate", "Heart rate through one day: resting HR plus timestamped readings.", (d) => garmin.getDailyHeartRate(d));
   dateTool(server, "get_spo2", "Pulse oximetry and altitude acclimation for one day.", (d) => garmin.getDailySpo2(d));
-  rangeTool(server, "get_wellness_activity_summaries", "Wellness activity summaries (all-day movement) for a date range.", LIMITS.dailySummaries, (s, e) => garmin.getWellnessActivitySummaries(s, e));
+  rangeTool(server, "get_wellness_activity_summaries", "Wellness activity summaries (all-day movement) for a date range.", LIMITS.wellnessActivity, (s, e) => garmin.getWellnessActivitySummaries(s, e));
 
   // Body, goals, profile
   rangeTool(server, "get_weight", "Weight and body composition measurements for a date range.", LIMITS.weight, (s, e) => garmin.getWeightMeasurements(s, e));

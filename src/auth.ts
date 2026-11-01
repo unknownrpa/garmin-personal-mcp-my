@@ -16,6 +16,8 @@ export const TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-k
 export const DEFAULT_KEY_FILE = join(homedir(), ".config", "garmin", "connect-personal-api-key");
 const DEFAULT_CACHE_FILE = join(homedir(), ".config", "garmin-personal-mcp", "bearer-token.json");
 const REFRESH_WINDOW_SECONDS = 60 * 60;
+/** Far above the 1 second a FIT download takes, far below the 300 seconds a Vercel function gets. */
+export const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface AuthOptions {
   apiKey: string;
@@ -23,6 +25,7 @@ export interface AuthOptions {
   cacheFile?: string;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  timeoutMs?: number;
 }
 
 export interface BearerToken {
@@ -88,6 +91,7 @@ export class TokenProvider {
     const res = await this.fetchImpl(`${this.baseUrl}${TOKEN_PATH}`, {
       method: "POST",
       headers: { Accept: "*/*", Authorization: `ApiKey ${this.opts.apiKey}` },
+      signal: AbortSignal.timeout(this.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
