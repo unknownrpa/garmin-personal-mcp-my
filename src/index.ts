@@ -6,6 +6,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer } from "./server.js";
 import { createFetchHandler } from "./http.js";
+import { oauthConfigFromEnv } from "./oauth.js";
 
 export { createFetchHandler } from "./http.js";
 export { createServer } from "./server.js";
@@ -33,6 +34,11 @@ HTTP mode:
   MCP_BEARER_TOKEN  required; clients send it as "Authorization: Bearer <token>"
   MCP_HOST          bind address; default 127.0.0.1, or 0.0.0.0 when the platform sets PORT
 
+OAuth sign-in, for Claude on the web and mobile and ChatGPT (set all three or none):
+  MCP_PUBLIC_URL     origin clients reach this server on, e.g. https://you.vercel.app
+  OAUTH_PASSWORD     sign-in password, 32 characters or more
+  OAUTH_SIGNING_KEY  key for issued tokens, 32 characters or more; changing it signs everyone out
+
 Create a key at https://connect.garmin.com/app/settings/personalApiToken`);
   process.exit(0);
 }
@@ -55,12 +61,22 @@ async function serve(handler: (r: Request) => Promise<Response>, req: IncomingMe
   res.end();
 }
 
-function httpServer(apiKeyFile: string | undefined): Server {
+function buildHandler(apiKeyFile: string | undefined): (r: Request) => Promise<Response> {
   const bearerToken = process.env.MCP_BEARER_TOKEN;
-  const handler = bearerToken
-    ? createFetchHandler({ apiKeyFile, bearerToken })
-    : async () => new Response("MCP_BEARER_TOKEN is not set. Refusing to serve Garmin data without one.", { status: 503 });
-  if (!bearerToken) console.error("MCP_BEARER_TOKEN is not set; every request will answer 503 until it is.");
+  if (!bearerToken) {
+    console.error("MCP_BEARER_TOKEN is not set; every request will answer 503 until it is.");
+    return async () => new Response("MCP_BEARER_TOKEN is not set. Refusing to serve Garmin data without one.", { status: 503 });
+  }
+  try {
+    return createFetchHandler({ apiKeyFile, bearerToken, oauth: oauthConfigFromEnv() });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    return async () => new Response("The server's sign-in settings are invalid. See the server log.", { status: 503 });
+  }
+}
+
+function httpServer(apiKeyFile: string | undefined): Server {
+  const handler = buildHandler(apiKeyFile);
   return createHttpServer((req, res) => {
     serve(handler, req, res).catch((err) => {
       console.error(err);

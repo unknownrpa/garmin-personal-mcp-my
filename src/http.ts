@@ -10,6 +10,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { timingSafeEqual } from "node:crypto";
 import { TokenProvider, resolveApiKey } from "./auth.js";
 import { GarminClient } from "./client.js";
+import { createOAuth, type OAuthConfig } from "./oauth.js";
 import { buildServer } from "./server.js";
 
 export interface FetchHandlerOptions {
@@ -19,22 +20,29 @@ export interface FetchHandlerOptions {
   bearerToken: string;
   /** Path(s) the handler answers on. Default "/mcp". */
   path?: string | string[];
+  /** Also sign clients in through OAuth, for those that cannot send a fixed header. */
+  oauth?: OAuthConfig;
 }
 
 export function createFetchHandler(opts: FetchHandlerOptions): (request: Request) => Promise<Response> {
   if (!opts.bearerToken) throw new Error("bearerToken is required for HTTP mode");
   const expected = Buffer.from(opts.bearerToken);
   const paths = new Set(Array.isArray(opts.path) ? opts.path : [opts.path ?? "/mcp"]);
+  const oauth = opts.oauth && createOAuth(opts.oauth, [...paths][0]);
   let garmin: Promise<GarminClient> | undefined;
   const client = () =>
     (garmin ??= resolveApiKey(opts).then((apiKey) => new GarminClient(new TokenProvider({ apiKey }))));
 
   return async (request) => {
     const url = new URL(request.url);
+    const oauthResponse = await oauth?.handle(request, url.pathname);
+    if (oauthResponse) return oauthResponse;
     if (!paths.has(url.pathname)) return new Response("Not found", { status: 404 });
-    const given = Buffer.from(request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "");
-    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
-      return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+    const presented = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+    const given = Buffer.from(presented);
+    const isStaticToken = given.length === expected.length && timingSafeEqual(given, expected);
+    if (!isStaticToken && !oauth?.accepts(presented)) {
+      return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": oauth?.challenge ?? "Bearer" } });
     }
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
