@@ -1,8 +1,8 @@
 # garmin-personal-mcp
 
-Your whole Garmin history, in Claude. Every activity since your first watch, the original FIT files, sleep, HRV, Body Battery. Runs on your machine with a key only you hold.
+Your whole Garmin history, in Claude. Every activity since your first watch, the original FIT files, sleep, HRV, Body Battery. Runs on your machine, or on a server of your own, with a key only you hold.
 
-In October 2026 Garmin opened a [Personal tier](https://developer.garmin.com/gc-developer-program/overview/) of the Connect API: one key, one person, your own data, no application to file. This is a TypeScript [MCP](https://modelcontextprotocol.io) server over that API, so Claude Desktop, Claude Code, Cursor, ChatGPT or any other MCP client can ask questions of your data directly. It is read-only. Nothing is written to your Garmin account and nothing is sent anywhere except to the AI client you connect.
+In October 2026 Garmin opened a [Personal tier](https://developer.garmin.com/gc-developer-program/overview/) of the Connect API: one key, one person, your own data, no application to file. This is a TypeScript [MCP](https://modelcontextprotocol.io) server over that API, so Claude Desktop, Claude Code, Cursor, ChatGPT or any other MCP client can ask questions of your data directly. It is read-only. Nothing is written to your Garmin account and nothing is sent anywhere except to the AI client you connect. If you deploy it to a host such as Vercel, your key is stored there and your data passes through it.
 
 Not affiliated with Garmin. Garmin and Garmin Connect are trademarks of Garmin Ltd.
 
@@ -48,7 +48,7 @@ Not affiliated with Garmin. Garmin and Garmin Connect are trademarks of Garmin L
 
    Use the same `node .../dist/index.js` as the command in any other client's config.
 
-Needs Node 20 or newer. The key can also come from `GARMIN_PERSONAL_API_KEY` or `--api-key-file <path>`. The file path is the one Garmin's own [Python client](https://github.com/garmin/connect-personal-api-python) reads, so the two share a key.
+Needs Node 24. The key can also come from `GARMIN_PERSONAL_API_KEY` or `--api-key-file <path>`. The file path is the one Garmin's own [Python client](https://github.com/garmin/connect-personal-api-python) reads, so the two share a key.
 
 ## What you can ask
 
@@ -69,22 +69,22 @@ The activity list pages all the way back to the first activity on the account, 5
 | `get_activity` | Everything Garmin Connect stores for one activity. |
 | `get_activity_workout` | The structured workout followed during the activity, if any. |
 | `get_activity_recording` | The original FIT file decoded: session totals, every lap, and a downsampled stream of heart rate, power, speed, cadence, altitude and position. |
-| `get_daily_summaries` | Steps, floors, intensity minutes, resting HR, stress, Body Battery and calories per day. Up to 180 days per call. |
-| `get_sleep` / `get_sleep_summaries` | One night in full (stages, score, respiration, SpO2), or per-night summaries for up to 28 days. |
-| `get_hrv` / `get_hrv_summaries` | Overnight HRV for one date, or daily summaries for up to 180 days. |
-| `get_body_battery` | Per day, up to 28 days. |
-| `get_stress`, `get_steps` | Per day, up to 7 days. |
-| `get_hydration` | Per day, up to 28 days. |
+| `get_daily_summaries` | Steps, floors, intensity minutes, resting HR, stress, Body Battery and calories per day. Up to 366 days per call. |
+| `get_sleep` / `get_sleep_summaries` | One night in full (stages, score, respiration, SpO2), or per-night summaries for up to 30 days. |
+| `get_hrv` / `get_hrv_summaries` | Overnight HRV for one date, or daily summaries for up to 366 days. |
+| `get_body_battery` | Per day, up to 30 days. |
+| `get_stress`, `get_steps` | Per day, up to 28 days. |
+| `get_hydration` | Per day, up to 30 days. |
 | `get_heart_rate` | Resting HR plus timestamped readings for one day. |
 | `get_spo2` | Pulse ox and altitude acclimation for one day. |
 | `get_wellness_activity_summaries` | All-day movement summaries for a range. |
-| `get_weight`, `get_weight_goals` | Measurements and goals, up to a year. |
+| `get_weight`, `get_weight_goals` | Measurements and goals, up to four years. |
 | `get_food_logs` | Nutrition for one day. |
 | `get_profile`, `get_heart_rate_zones`, `get_fitness_age` | Settings, zones per sport, fitness age. |
 | `get_menstrual_cycle_summary`, `get_menstrual_cycle_day` | Cycle data for a date. |
 | `get_raw` | GET any other Personal API path, for endpoints Garmin adds later. |
 
-The per-call range limits are what Garmin's servers accepted on 21 October 2026. Above them Garmin answers 400 or 500 with an empty body, so the tools check the span first and return an error that names the limit. The model splits the range and carries on.
+The per-call range limits count both end dates and are the longest spans Garmin's servers accepted on 1 November 2026. Somewhere above them Garmin answers 400 or 500 with an empty body, so the tools check the span first and return an error that names the limit. The model splits the range and carries on.
 
 ## Running it on a server
 
@@ -99,7 +99,7 @@ It is stateless: each request builds its own server and transport, no session id
 | `GARMIN_PERSONAL_API_KEY` | the key from Garmin Connect |
 | `MCP_BEARER_TOKEN` | a secret you make up, e.g. `openssl rand -hex 32` |
 
-The endpoint is `https://<your app>/mcp` on all of them. Railway, Render and Fly run `pnpm start`, which binds to the port they assign; Vercel imports the same entry and serves it as a function. On Vercel, use the production URL: preview URLs sit behind Vercel's own login, which MCP clients can't pass.
+The endpoint is `https://<your app>/mcp` on all of them. Railway, Render and Fly run `pnpm start`, which binds to the port they assign; Vercel imports the same entry and serves it as a function. On Vercel, check that the Framework Preset is **Node**, and use the production domain from the project's Domains list: preview URLs and per-deployment URLs sit behind Vercel's own login, which MCP clients can't pass.
 
 **Run it on a machine you own** (a VPS, a home server, a Pi):
 
@@ -116,6 +116,24 @@ The endpoint is `http://host:3333/mcp`. Put TLS in front (Caddy, a Cloudflare tu
 
 Whichever way, clients connect with the URL plus `Authorization: Bearer <MCP_BEARER_TOKEN>`. The token is required: without it, anyone who finds the URL can read your health data.
 
+### Signing in with OAuth
+
+ChatGPT and Claude on the web, desktop and mobile can't be relied on to send a fixed header, so the server can also sign them in through OAuth. It is a small single-user authorization server with one password and no database. Set all three variables or none: with only some of them set, the server answers 503 rather than switching sign-in off.
+
+| Variable | Value |
+|---|---|
+| `MCP_PUBLIC_URL` | the origin clients reach, e.g. `https://you.vercel.app`, with no path |
+| `OAUTH_PASSWORD` | the sign-in password, 32 characters or more, e.g. `openssl rand -hex 32` |
+| `OAUTH_SIGNING_KEY` | the key for issued tokens, 32 characters or more, made the same way |
+
+Add the server to the client by its `/mcp` URL and enter the password when the sign-in page opens. Claude and ChatGPT register themselves. `MCP_BEARER_TOKEN` keeps working alongside OAuth, which suits Claude Code:
+
+```sh
+claude mcp add --transport http garmin https://<your app>/mcp --header "Authorization: Bearer <MCP_BEARER_TOKEN>"
+```
+
+To sign every client out, change `OAUTH_SIGNING_KEY`. Change `OAUTH_PASSWORD` as well if the password may have leaked.
+
 ## Limits, honestly
 
 - **One person.** Garmin's [Personal API terms](https://developer.garmin.com/gc-developer-program/personal/) make the key personal to you, usable only in tools you run for your own use. Deploying your own copy is fine. A hosted service that takes other people's keys is not, and this project will never become one.
@@ -124,6 +142,7 @@ Whichever way, clients connect with the URL plus `Authorization: Bearer <MCP_BEA
 - **No writes.** You can't write workouts to your devices: the Personal API has no write scope.
 - **Unpublished rate limits.** Bursts of a few dozen calls caused no throttling in testing. Garmin can change that without notice.
 - **Garmin's response shapes are undocumented.** The endpoints are the ones behind the Garmin Connect web app, listed by Garmin's own client. Fields can change.
+- **OAuth keeps no state.** Sign-in attempts are not rate limited, so the password has to be long and random. A refresh token lives for 30 days and is replaced on each use, but the old one stays valid until it expires. Nothing can be revoked individually: changing `OAUTH_SIGNING_KEY` revokes everything.
 
 How the key is handled: it is exchanged for a 24-hour bearer token, which is cached under `~/.config/garmin-personal-mcp` with mode 0600 and refreshed when under an hour remains. The key itself is never written by this server.
 
