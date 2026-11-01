@@ -4,6 +4,7 @@
   "description": "MCP server for your own Garmin data, using Garmin's Personal API key. Full history, FIT files, runs locally.",
   "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@10.34.9",
   "bin": {
     "garmin-personal-mcp": "dist/index.js"
   },
@@ -13,7 +14,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": "24.x"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
